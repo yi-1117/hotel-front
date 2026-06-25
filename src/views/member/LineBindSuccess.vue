@@ -12,49 +12,55 @@
   <script setup>
   import { ref, onMounted } from 'vue';
   import { useAuthStore } from '@/stores/auth';
-  
+  import axios from 'axios';
+  import { API_BASE_URL } from '@/config';
+
   const store = useAuthStore();
   const isBound = ref(false);
-  
+
   onMounted(() => {
     initializeLiff();
   });
-  
+
   function initializeLiff() {
-  // 確認 liff 是否已經加載
-  if (typeof window.liff === 'undefined') {
-    console.error('LIFF SDK 尚未加載');
-    return;
-  }
-
-  // 初始化 LIFF
-  window.liff.init({
-    liffId: '2006867912-WgxpB5oY' // 請替換成你的 LIFF ID
-  }).then(() => {
-    // 確認是否已經登入
-    if (window.liff.isLoggedIn()) {
-      const userId = window.liff.getDecodedIDToken().sub;
-      store.socialMediaAccount = userId;
-      isBound.value = true;
+    if (typeof window.liff === 'undefined') {
+      console.error('LIFF SDK 尚未加載');
+      return;
     }
-  }).catch((error) => {
-    console.error('LIFF 初始化失敗', error);
-  });
-}
 
-function bindLineAccount() {
-  // 確認 liff 是否已經加載並初始化
-  if (typeof window.liff === 'undefined') {
-    console.error('LIFF 尚未加載');
-    return;
+    window.liff.init({ liffId: '2006867912-WgxpB5oY' }).then(async () => {
+      if (window.liff.isLoggedIn()) {
+        const lineUserId = window.liff.getDecodedIDToken().sub;
+        const memberId = store.memberDetails?.memberId || localStorage.getItem('memberId');
+
+        if (!memberId) {
+          console.error('找不到會員 ID，請先登入系統');
+          return;
+        }
+
+        try {
+          await axios.post(`${API_BASE_URL}/api/line/bind`, { lineUserId, memberId });
+          store.setMemberDetails({ ...store.memberDetails, socialMediaAccount: lineUserId });
+          isBound.value = true;
+        } catch (error) {
+          console.error('綁定失敗:', error.response?.data || error.message);
+        }
+      }
+    }).catch((error) => {
+      console.error('LIFF 初始化失敗', error);
+    });
   }
 
-  // 呼叫 login 方法進行 LINE 登入
-  window.liff.login();
-}
-  
+  function bindLineAccount() {
+    if (typeof window.liff === 'undefined') {
+      console.error('LIFF 尚未加載');
+      return;
+    }
+    window.liff.login();
+  }
+
   function addOfficialLineAccount() {
-    window.location.href = 'https://line.me/R/ti/p/@228attwe'; // 替換為你的官方帳號
+    window.location.href = 'https://line.me/R/ti/p/@228attwe';
   }
   </script>
   

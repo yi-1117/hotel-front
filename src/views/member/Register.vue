@@ -378,6 +378,8 @@ const countdown = ref(0);
 const countdownInterval = ref(null);
 const isVerified = ref(false);
 const showDetailsForm = ref(false);
+const registrationToken = ref(""); // 存放 complete-password 回傳的 JWT
+const lineUserIdFromUrl = ref(""); // 從 LINE OAuth 帶來的 userId
 
 const selectedCity = ref("");
 const selectedArea = ref("");
@@ -389,17 +391,15 @@ const verificationStatus = ref(null);
 
 // 呼叫 Line Login
 const bindLineAccount = () => {
-  // 確保你定義了 `API_BASE_URL`
-  const API_BASE_URL = "http://localhost:8080"; // 根據實際情況修改
   const lineLoginUrl = "https://access.line.me/oauth2/v2.1/authorize";
   const clientId = "2006867912";
   const redirectUri = encodeURIComponent(
     `${API_BASE_URL}/api/line-login/callback`
   );
-  const state = "yourState123"; // 用於防篡改，可以考慮動態生成並存儲
+  const state = crypto.randomUUID(); // 隨機產生防 CSRF
   const scope = "profile openid";
 
-  // 產生 LINE Login URL
+  sessionStorage.setItem("line-oauth-state", state);
   window.location.href = `${lineLoginUrl}?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&state=${state}&scope=${scope}`;
 };
 
@@ -461,6 +461,12 @@ const sendVerificationEmail = async () => {
     }
 
     if (response.data.isVerified) {
+      // 若此時有 LINE userId（從 LINE OAuth 來的），提示綁定而非要求換 Email
+      if (lineUserIdFromUrl.value) {
+        await handleLineBindToExisting(response.data.memberId);
+        return;
+      }
+
       isVerified.value = true;
       Swal.fire({
         title: "已驗證",
@@ -494,6 +500,76 @@ const sendVerificationEmail = async () => {
     Swal.fire({
       title: "發送失敗",
       text: error.response?.data?.message || "請稍後再試。",
+      icon: "error",
+      confirmButtonText: "確定",
+    });
+  }
+};
+
+// LINE 衝突處理：Email 已存在，詢問是否綁定現有帳號
+const handleLineBindToExisting = async (existingMemberId) => {
+  const { isConfirmed } = await Swal.fire({
+    title: "此 Email 已有帳號",
+    text: "是否將 LINE 帳號綁定到此既有帳號並直接登入？",
+    icon: "question",
+    showCancelButton: true,
+    confirmButtonText: "綁定並登入",
+    cancelButtonText: "換個 Email",
+  });
+
+  if (!isConfirmed) {
+    email.value = "";
+    registrationStore.email = "";
+    return;
+  }
+
+  const { value: pwd, isConfirmed: pwdConfirmed } = await Swal.fire({
+    title: "請輸入密碼",
+    text: "驗證您的帳號身份",
+    input: "password",
+    inputPlaceholder: "請輸入密碼",
+    showCancelButton: true,
+    confirmButtonText: "確認",
+    cancelButtonText: "取消",
+    inputAttributes: { autocomplete: "current-password" },
+  });
+
+  if (!pwdConfirmed || !pwd) return;
+
+  try {
+    // 驗證密碼
+    const loginRes = await axios.post(`${API_BASE_URL}/api/members/login`, {
+      email: email.value,
+      password: pwd,
+    });
+
+    const { memberId } = loginRes.data;
+    if (!memberId) throw new Error("驗證失敗");
+
+    // 綁定 LINE
+    await axios.post(`${API_BASE_URL}/api/line/bind`, {
+      memberId,
+      lineUserId: lineUserIdFromUrl.value,
+    });
+
+    // 取得會員資料並更新 store
+    const detailsRes = await axios.get(`${API_BASE_URL}/api/members/details/${memberId}`);
+    authStore.setMemberDetails(detailsRes.data);
+    localStorage.setItem("isLoggedIn", "true");
+    localStorage.setItem("memberId", memberId);
+
+    await Swal.fire({
+      title: "綁定成功！",
+      text: `LINE 已綁定，歡迎回來，${detailsRes.data.fullName}！`,
+      icon: "success",
+      confirmButtonText: "確定",
+    });
+
+    router.replace(`/profile/${memberId}`);
+  } catch (error) {
+    Swal.fire({
+      title: "失敗",
+      text: error.response?.data || "密碼錯誤或綁定失敗，請重試。",
       icon: "error",
       confirmButtonText: "確定",
     });
@@ -592,10 +668,13 @@ const nextStep = async () => {
   }
 
   try {
-    await axios.post(`${API_BASE_URL}/api/members/complete-password`, {
+    const res = await axios.post(`${API_BASE_URL}/api/members/complete-password`, {
       memberId: registrationStore.memberId,
       password: password.value,
     });
+
+    // 存下 JWT，submitDetails 時帶入 Authorization header
+    registrationToken.value = res.data.token;
 
     Swal.fire({
       title: "密碼設定成功！",
@@ -635,7 +714,8 @@ const submitDetails = async () => {
         preferredLanguage: detailsData.preferredLanguage,
         newsletterSubscription: detailsData.newsletterSubscription,
         socialMediaAccount: detailsData.socialMediaAccount,
-      }
+      },
+      { headers: { Authorization: `Bearer ${registrationToken.value}` } }
     );
     console.log("詳細資料提交成功:", detailsResponse.data);
 
@@ -671,7 +751,29 @@ const submitDetails = async () => {
 
 //
 onMounted(() => {
-  registrationStore.clearStoreOnRefresh(); // 這是你要呼叫的方法
+  registrationStore.clearStoreOnRefresh();
+
+  // 從 LINE OAuth 帶來的資訊預填
+  const urlParams = new URLSearchParams(window.location.search);
+  const lineUserId = urlParams.get("line-user-id");
+  const displayName = urlParams.get("display-name");
+  const returnedState = urlParams.get("state");
+
+  if (lineUserId) {
+    // 驗證 state 防止 CSRF
+    const savedState = sessionStorage.getItem("line-oauth-state");
+    sessionStorage.removeItem("line-oauth-state");
+    if (returnedState && savedState && returnedState !== savedState) {
+      Swal.fire({ title: "安全驗證失敗", text: "請重新嘗試 LINE 登入。", icon: "error", confirmButtonText: "確定" });
+      return;
+    }
+
+    lineUserIdFromUrl.value = lineUserId;
+    details.value.socialMediaAccount = lineUserId;
+    if (displayName) {
+      details.value.fullName = displayName;
+    }
+  }
 });
 
 onBeforeUnmount(() => {

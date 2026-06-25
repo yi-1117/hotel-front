@@ -138,25 +138,24 @@ const loginMember = async () => {
   }
 };
 
-// ✅ LINE 登入邏輯（重用共用邏輯）
+// ✅ LINE 登入回調處理
 onMounted(async () => {
   const urlParams = new URLSearchParams(window.location.search);
   const memberId = urlParams.get("member-id");
-  const accessToken = urlParams.get("access-token");
 
-  if (memberId && accessToken) {
-    console.log("🔹 從 URL 獲取登入資訊：", { memberId, accessToken });
+  if (!memberId) return;
 
-    // 存入 sessionStorage
-    // sessionStorage.setItem("member-id", memberId);
-    // sessionStorage.setItem("access-token", accessToken);
+  // 驗證 state 防止 CSRF
+  const returnedState = urlParams.get("state");
+  const savedState = sessionStorage.getItem("line-oauth-state");
+  sessionStorage.removeItem("line-oauth-state");
 
-    // ✅ 共用邏輯
-    await handleLoginSuccess(memberId);
-
-    // 清除 URL 參數
-    router.replace(`/profile/${memberId}`);
+  if (returnedState && savedState && returnedState !== savedState) {
+    Swal.fire({ title: "登入失敗", text: "安全驗證失敗，請重新登入。", icon: "error", confirmButtonText: "確定" });
+    return;
   }
+
+  await handleLoginSuccess(memberId);
 });
 
 // 返回上一頁
