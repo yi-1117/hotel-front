@@ -82,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { useOrderStore } from "@/stores/order";
 import { useRouter } from "vue-router";
 import DatePicker from "@vuepic/vue-datepicker";
@@ -93,6 +93,10 @@ import { useRoomSearchStore } from "@/stores/roomSearch";
 const router = useRouter();
 const orderStore = useOrderStore();
 const roomSearchStore = useRoomSearchStore();
+
+onMounted(() => {
+  roomSearchStore.fetchRoomTypes();
+});
 
 const formatDate = (date) => {
   return date instanceof Date ? date.toISOString().split('T')[0] : date;

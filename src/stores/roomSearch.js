@@ -1,6 +1,6 @@
 // src/stores/roomSearch.js
 import { defineStore } from 'pinia';
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import axios from 'axios';
 import { API_BASE_URL } from "@/config";
 
@@ -20,7 +20,7 @@ export const useRoomSearchStore = defineStore('roomSearch', () => {
     const roomTypes = ref([]);  // 所有的房型
     const roomPrice = ref(0);  // 下拉式選單選的房型的房價
     const selectedRooms = ref([]);  // 已經加入的房型
-    const selectedRoomType = roomTypes.value[0];  // 下拉式選單選擇的房型
+    const selectedRoomType = ref("");  // 下拉式選單選擇的房型
 
     // 總價格
     const totalCost = computed(() => {
@@ -71,11 +71,6 @@ export const useRoomSearchStore = defineStore('roomSearch', () => {
             console.error("Error fetching room types:", error);
         }
     };
-
-    // 當房型資料載入完成後，初始化房型
-    onMounted(async () => {
-        await fetchRoomTypes();
-    });
 
     return {
         year,
